@@ -8,8 +8,8 @@ RUN npm run build
 FROM python:3.12-slim AS python-base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DATA_DIR=/app/data
 WORKDIR /app
-COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements*.txt ./
+RUN pip install --no-cache-dir -r requirements.lock.txt
 COPY backend/ ./backend/
 
 FROM python-base AS test
