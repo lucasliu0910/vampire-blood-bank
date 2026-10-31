@@ -25,6 +25,20 @@ sessions = {}
 login_attempts = defaultdict(deque)
 SESSION_SECONDS = 12 * 60 * 60
 
+# Single-use "are you a vampire?" challenges: id -> {answer, expires}. In memory, like sessions.
+captchas = {}
+CAPTCHA_SECONDS = 120
+CAPTCHA_MAX_PENDING = 1000
+# (question, correct answer, three wrong answers)
+CAPTCHA_QUESTIONS = [
+    ("What do you see when you look in a mirror?", "Nothing at all", ["A rather tired face", "The sunrise", "A very small bat"]),
+    ("Which of these should never be stored in the refrigerator?", "Holy water", ["O-negative", "AB-positive", "Anything labelled 'reserve'"]),
+    ("When must you be safely indoors?", "Before sunrise", ["Before brunch", "Before the 9 a.m. meeting", "After the second coffee"]),
+    ("Which blood type is the universal red-cell donor?", "O-negative", ["A-positive", "AB-positive", "B-negative"]),
+    ("A stranger's house requires one thing before you may enter. What?", "An invitation", ["A loyalty card", "A password reset", "A firm handshake"]),
+    ("Which of these is most likely to ruin your evening?", "Garlic bread", ["Moonlight", "A velvet cape", "A midnight snack"]),
+    ("What is the correct way to greet the dawn?", "You don't", ["With a hearty breakfast", "With sunglasses", "With a morning jog"]),
+]
 
 def write_json(path, data):
     temporary = path.with_suffix(".tmp")
@@ -115,6 +129,8 @@ def require_role(user, role):
 class Login(BaseModel):
     username: str = Field(min_length=1, max_length=80)
     password: str = Field(min_length=1, max_length=200)
+    captcha_id: str = Field(min_length=1, max_length=100)
+    captcha_answer: str = Field(min_length=1, max_length=100)
 
 
 class BloodRequest(BaseModel):
@@ -132,6 +148,20 @@ class Adjustment(BaseModel):
 def health():
     return {"status": "ok"}
 
+@app.get("/api/captcha")
+def captcha():
+    question, answer, wrong = secrets.choice(CAPTCHA_QUESTIONS)
+    options = [answer, *wrong]
+    secrets.SystemRandom().shuffle(options)
+    with lock:
+        now = time.time()
+        for key in [k for k, v in captchas.items() if v["expires"] <= now]:
+            del captchas[key]
+        while len(captchas) >= CAPTCHA_MAX_PENDING:
+            del captchas[next(iter(captchas))]  # drop the oldest
+        captcha_id = secrets.token_urlsafe(16)
+        captchas[captcha_id] = {"answer": answer, "expires": now + CAPTCHA_SECONDS}
+    return {"id": captcha_id, "question": question, "options": options}
 
 @app.post("/api/login")
 def login(payload: Login, request: Request, response: Response):
@@ -150,6 +180,10 @@ def login(payload: Login, request: Request, response: Response):
         if len(attempts) >= 10:
             raise HTTPException(429, "Too many sign-in attempts. Please wait a minute.")
         attempts.append(now)
+        # Challenges are single-use: popped whether the answer is right or wrong.
+        challenge = captchas.pop(payload.captcha_id, None)
+        if not challenge or challenge["expires"] <= now or not hmac.compare_digest(challenge["answer"].encode(), payload.captcha_answer.encode()):
+            raise HTTPException(400, "Vampire verification failed. A true vampire would know that. Try the new question.")
         users = json.loads((DATA_DIR / "users.json").read_text())
         user = next((u for u in users if u["username"] == payload.username), None)
         # Use a real password hash even when the username does not exist.
