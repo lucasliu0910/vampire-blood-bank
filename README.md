@@ -63,3 +63,18 @@ docker run --rm vampire-blood-bank-test
 To intentionally erase all users, stock, and history and restore seed data, run `docker compose down -v`, then start again. This is destructive.
 
 The browser and API share one origin. The Compose port is bound to localhost. API documentation is at http://localhost:8080/docs; health is at `/api/health`.
+
+## Verification
+
+Verified locally on October 31, 2026:
+
+- Docker Compose builds successfully and the app container reports healthy.
+- Production React build succeeds; frontend package audit reports zero known vulnerabilities at build time.
+- 13 backend tests pass, including role restrictions, invalid inputs, stock limits, insufficient stock, concurrent order protection, authentication, and persistence.
+- Browser checks completed for all three roles: manager adjustment, donor contribution, vampire order, own-history visibility, logout, and blood-type selection synchronization.
+- Rebuilding/recreating the app preserves JSON users, inventory, and transaction history. Sessions correctly require a new login after restart.
+- No browser errors or warnings were reported during final inspection.
+
+The local demo retains three verification transactions (one adjustment, one donation, one order); their combined stock change is zero. Automated tests use isolated temporary directories and do not modify demo data.
+
+The test runner currently emits an upstream Starlette deprecation warning for its httpx-based test client; all 13 tests pass. This does not affect the running application.
