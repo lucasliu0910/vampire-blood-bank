@@ -12,12 +12,20 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(bank, "DATA_DIR", tmp_path)
     bank.sessions.clear()
     bank.login_attempts.clear()
+    bank.captchas.clear()
     with TestClient(bank.app) as client:
         yield client
 
 
+def solve_captcha(client, correct=True):
+    challenge = client.get("/api/captcha").json()
+    answer = bank.captchas[challenge["id"]]["answer"]
+    assert answer in challenge["options"] and len(challenge["options"]) == 4
+    return {"captcha_id": challenge["id"], "captcha_answer": answer if correct else "Wrong on purpose"}
+
+
 def sign_in(client, role):
-    response = client.post("/api/login", json={"username": role, "password": f"{role.title()}123!"})
+    response = client.post("/api/login", json={"username": role, "password": f"{role.title()}123!", **solve_captcha(client)})
     assert response.status_code == 200
     assert "password" not in response.text
     assert "HttpOnly" in response.headers["set-cookie"]
@@ -26,7 +34,7 @@ def sign_in(client, role):
 
 def test_authentication_and_logout(client):
     assert client.get("/api/dashboard").status_code == 401
-    assert client.post("/api/login", json={"username": "manager", "password": "wrong"}).status_code == 401
+    assert client.post("/api/login", json={"username": "manager", "password": "wrong", **solve_captcha(client)}).status_code == 401
     sign_in(client, "manager")
     assert client.get("/api/me").json()["role"] == "manager"
     assert client.post("/api/logout").status_code == 204
@@ -114,5 +122,20 @@ def test_concurrent_orders_cannot_oversell(client):
 def test_cross_origin_and_login_throttle(client):
     assert client.post("/api/login", headers={"Origin": "https://elsewhere.example"}, json={"username": "manager", "password": "Manager123!"}).status_code == 403
     for _ in range(10):
-        assert client.post("/api/login", json={"username": "nobody", "password": "wrong"}).status_code == 401
-    assert client.post("/api/login", json={"username": "manager", "password": "Manager123!"}).status_code == 429
+        assert client.post("/api/login", json={"username": "nobody", "password": "wrong", **solve_captcha(client)}).status_code == 401
+    assert client.post("/api/login", json={"username": "manager", "password": "Manager123!", **solve_captcha(client)}).status_code == 429
+
+def test_vampire_captcha(client):
+    creds = {"username": "vampire", "password": "Vampire123!"}
+    # No captcha, a wrong answer, and an unknown challenge are all rejected before the password is checked.
+    assert client.post("/api/login", json=creds).status_code == 422
+    assert client.post("/api/login", json={**creds, **solve_captcha(client, correct=False)}).status_code == 400
+    assert client.post("/api/login", json={**creds, "captcha_id": "nope", "captcha_answer": "Nothing at all"}).status_code == 400
+    # A challenge is single use, even when the answer was right.
+    solved = solve_captcha(client)
+    assert client.post("/api/login", json={**creds, **solved}).status_code == 200
+    assert client.post("/api/login", json={**creds, **solved}).status_code == 400
+    # Expired challenges are refused.
+    stale = solve_captcha(client)
+    bank.captchas[stale["captcha_id"]]["expires"] = 0
+    assert client.post("/api/login", json={**creds, **stale}).status_code == 400
