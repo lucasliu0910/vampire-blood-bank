@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8000"
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - blood-bank-data:/app/data
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+volumes:
+  blood-bank-data:
