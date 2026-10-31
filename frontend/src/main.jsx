@@ -56,13 +56,22 @@ function Login({ onLogin }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [captcha, setCaptcha] = useState(null);
+  const [choice, setChoice] = useState('');
   const usernameRef = useRef(null);
+  async function loadCaptcha() {
+    setChoice(''); setCaptcha(null);
+    try { setCaptcha(await api('/captcha')); }
+    catch (err) { setError(err.message); }
+  }
+  useEffect(() => { loadCaptcha(); }, []);
   async function submit(event) {
     event.preventDefault();
     if (busy) return;
+    if (!captcha || !choice) { setError('Answer the vampire verification first.'); return; }
     setBusy(true); setError('');
-    try { onLogin(await api('/login', { method: 'POST', body: JSON.stringify({ username, password }) })); }
-    catch (err) { setError(err.message); }
+    try { onLogin(await api('/login', { method: 'POST', body: JSON.stringify({ username, password, captcha_id: captcha.id, captcha_answer: choice }) })); }
+    catch (err) { setError(err.message); loadCaptcha(); }
     finally { setBusy(false); }
   }
   return <main className="login-layout">
@@ -76,6 +85,10 @@ function Login({ onLogin }) {
       <form onSubmit={submit}>
         <label htmlFor="username">Username</label><input ref={usernameRef} id="username" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" placeholder="Enter your username" required maxLength={80} />
         <label htmlFor="password">Password</label><input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" placeholder="Enter your password" required maxLength={200} />
+        <fieldset className="captcha" disabled={busy}><legend>Vampire verification</legend>
+          {captcha ? <><p id="captcha-question">{captcha.question}</p><div className="captcha-options" role="radiogroup" aria-labelledby="captcha-question">{captcha.options.map(option => <button type="button" role="radio" aria-checked={choice === option} className={`captcha-option ${choice === option ? 'selected' : ''}`} key={option} onClick={() => setChoice(option)}>{option}</button>)}</div></> : <p className="muted">Consulting the night watch…</p>}
+          <button type="button" className="captcha-skip" onClick={loadCaptcha}>Ask me something else</button>
+        </fieldset>
         {error && <p className="notice error" role="alert">{error}</p>}
         <button className="primary" disabled={busy}>{busy ? 'Signing in…' : 'Enter the bank'}<Icon name="arrow" size={18} /></button>
       </form>
